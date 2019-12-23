@@ -1,0 +1,139 @@
+@prefix elmo: <http://dotwebstack.org/def/elmo#>.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix dc: <http://purl.org/dc/elements/1.1/>.
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#>.
+@prefix foaf: <http://xmlns.com/foaf/0.1/>.
+@prefix sh: <http://www.w3.org/ns/shacl#>.
+@prefix http: <http://www.w3.org/2011/http#>.
+
+@prefix config: <http://dotwebstack.org/configuration/redir/>.
+
+#Frontend
+GRAPH config:MainStage {
+
+  # We state that any URI containg /id/ should be considered as a non-information resource. 303 redirection is required.
+  # Redirect URL's that contain /id/ to URL's that have this replaced by /doc/
+
+  # New syntax (using JAX-RS format)
+  config:NonInformationResourceRedirection a elmo:Redirection;
+    elmo:pathPattern "{path}/id/{reference}";
+    elmo:redirectTemplate "{path}/doc/{reference}";
+  .
+
+  # A ParameterMapper maps "something" to a parameter or another parametermapper (chaining)
+  # An UriParameterMapper maps the original URL to the config:SubjectParameter
+  # Target might also be another valuemapper, so you can chain ValueMappers
+  # Pattern and Template are optional, without these, target will get the value of source
+  #
+  # JAX-RS path templating is used for the pattern and template.
+  # JAX-RS uri templating uses regex as follows: "{path}/id/{reference}" is equal to {path:[^/]+?}/id/{reference:[^/]+?}
+  # this means that a {..} doesn't match just any character, for this you must use something like {path:.+}
+  # See also: https://docs.oracle.com/cd/E19798-01/821-1841/ginpw
+  #
+  # In this case {domain} is not mapped, so the same URI's will be generated for O, T, A and P
+  config:SubjectFromUrl a elmo:UriParameterMapper;
+    elmo:source http:requestURI;
+    elmo:pattern "http://{domain}/{path}/doc/{reference}";
+    elmo:template "http://demo.dotwebstack.org/{path}/id/{reference}";
+    elmo:target elmo:SubjectParameter;
+  .
+
+  # --- Informal from here, as examples how we could extend the ParameterMapper structure ---
+  # Other more specific ParameterMappers might also exist
+  config:SubjectFromUrlRegex a elmo:RegexParameterMapper;
+    elmo:source http:requestURI;
+    elmo:pattern "^(.+)\\/doc\\/(.+)$";
+    elmo:template "$1\\/id\\/$2";
+    elmo:target elmo:SubjectParameter;
+  .
+  # Or even something completely different
+  elmo:HashParameterMapper rdfs:subClassOf elmo:ParameterMapper.
+  config:HashFromBody a elmo:HashParameterMapper;
+    elmo:source http:body;
+    # elmo:algorithm "base64"; (algorithm is not yet part of elmo-shacl, so we need to comment this one out)
+    elmo:target config:HashOfBody;
+  .
+  config:HashOfBody a elmo:TermParameter;
+		elmo:name "hash";
+		elmo:shape [
+			sh:datatype xsd:string;
+		]
+  .
+  # Chaining
+  # The elmo:source of chained ParameterMappers is ignored, and may be excluded
+  config:ChainedFromUrl a elmo:UriParameterMapper;
+    elmo:source http:requestURI;
+    elmo:pattern "{path}/doc/{reference}";
+    elmo:template "{path}/id/{reference}";
+    elmo:target config:HashFromBody;
+  .
+  # --- Informal till here ---
+
+  # A default representation to be used for any dereferenceable URI's. Two separate endpoints are needed
+  # (A) The default endpoint that matches a /resource path, and uses the ?subject=... query to map to the elmo:SubjectParameter
+  config:DefaultEndpoint a elmo:DynamicEndpoint;
+    elmo:pathPattern "/resource";
+    # No mapper needed in this case, because query parameters are mapped by default to the corresponding parameters.
+    # No link to a representation is needed, the correct representation is found using the properties of the representation itself
+  .
+  # (B) The endpoint that matches a /doc/ path, and uses the original URL to map to the elmo:SubjectParameter
+  config:DocEndpoint a elmo:DynamicEndpoint;
+    elmo:pathPattern "/doc/{reference}";
+    elmo:parameterMapper config:SubjectFromUrl;
+    # No link to a representation is needed, the correct representation is found using the properties of the representation itself
+  .
+  
+  # Two representations: a "default" to be used for any resource, and a special one for concepts
+  # The ConceptRepresentation will "override" the default representation, because the default representation is present at the bottom layer
+  # Three layers are predefined: BottomLayer, MiddleLayer and TopLayer. The default value is MiddleLayer.
+  config:ResourceRepresentation a elmo:Representation;
+    elmo:appliesTo "http://{domain}/{path}/id/{reference}";
+    elmo:layer elmo:BottomLayer;
+    elmo:informationProduct config:ResourceInformationProduct
+  .
+  config:ConceptRepresentation a elmo:Representation;
+    elmo:appliesTo "http://{domain}/{path}/id/concept/{term}";
+    elmo:informationProduct config:ConceptInformationProduct
+  .
+  
+}
+
+#Backend
+
+# NB: The use of ?SUBJECT (a bounded variable) is recommended above the use of <${SUBJECT}> (a generic template variable)
+#     At this moment, ?SUBJECT only works for string literals, so cannot be used in this case
+
+GRAPH config:MainStage {
+
+  config:ResourceInformationProduct a elmo:InformationProduct;
+    elmo:requiredParameter elmo:SubjectParameter;
+    elmo:query '''
+      CONSTRUCT {
+        <{$SUBJECT}> ?p ?o
+      }
+      WHERE {
+        <{$SUBJECT}> ?p ?o
+      }
+    ''';
+  .
+  
+  config:ConceptInformationProduct a elmo:InformationProduct;
+    elmo:requiredParameter elmo:SubjectParameter;
+    elmo:query '''
+      CONSTRUCT {
+        <{$SUBJECT}> a skos:Concept;
+            skos:prefLabel ?preflabel;
+            skos:definition ?definition;
+      }
+      WHERE {
+        <{$SUBJECT}> a skos:Concept
+        OPTIONAL {
+          <{$SUBJECT}> skos:prefLabel ?preflabel;
+        }
+        OPTIONAL {
+          <{$SUBJECT}> skos:definition ?definition;
+        }
+      }
+    ''';
+  .
+}

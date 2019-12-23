@@ -1,0 +1,136 @@
+@prefix elmo: <http://dotwebstack.org/def/elmo#>.
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#>.
+@prefix dc: <http://purl.org/dc/elements/1.1/>.
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#>.
+@prefix foaf: <http://xmlns.com/foaf/0.1/>.
+@prefix sh: <http://www.w3.org/ns/shacl#>.
+@prefix elmo-app: <http://dotwebstack.org/def/elmo/appearance/>.
+@prefix elmo-param: <http://dotwebstack.org/def/elmo/parameter/>.
+
+@prefix config: <http://dotwebstack.org/configuration/ipp/>.
+
+#Backend (only information products, theatre system config has been left out)
+GRAPH config:Theatre {
+	#
+	# Example of a URI parameter (${SUBJECT} or ?SUBJECT)
+	#
+
+  # See elmo2.ttl for the definition of elmo:SubjectParameter.
+  # elmo:SubjectParameter is a predefined TermParameter that can be used as a regular parameter.
+  # the name of elmo:SubjectParameter is SUBJECT.
+  # the value of elmo:SubjectParameter is also used to find out which elmo:Representation should be used
+
+  # NB: The use of ?SUBJECT (a bounded variable) is recommended above the use of <${SUBJECT}> (a generic template variable)
+  #     At this moment, ?SUBJECT only works for string literals, so cannot be used in this case
+	config:SubjectData a elmo:InformationProduct;
+		elmo:requiredParameter elmo:SubjectParameter;
+		elmo:query """
+			construct {
+				<${SUBJECT}> ?p ?o
+			}
+			where {
+				<${SUBJECT}> ?p ?o
+			}
+		"""
+	.
+  
+  # The recommended way would be to use a bounded variable. The query might be better understandable if it is visible that
+  # a variable is bounded up front. You might want to use UPPERCASE for these variables.
+	config:SubjectDataBounded a elmo:InformationProduct;
+		elmo:requiredParameter elmo:SubjectParameter;
+		elmo:query """
+			construct {
+				?SUBJECT ?p ?o
+			}
+			where {
+				?SUBJECT ?p ?o
+			}
+		"""
+	.
+	
+	#
+	# Example of a composite parameter (not predefined, although we might introduce a predefined paginator in the future!)
+  # (Currently, this example is not supported)
+	#
+	config:PaginatorParameter a elmo:Parameter;
+		elmo:name "paginator";
+		elmo:shape [
+			sh:property [
+				sh:name "pageSize";
+				sh:maxCount 1;
+				sh:defaultValue 20;
+				sh:datatype xsd:integer;
+			];
+			sh:property [
+				sh:name "page";
+				sh:maxCount 1;
+				sh:defaultValue 1;
+				sh:datatype xsd:integer;
+			]
+		]
+	.
+	config:PagedFriendsOfSubject a elmo:InformationProduct;
+		elmo:requiredParameter elmo:SubjectParameter;
+		elmo:requiredParameter config:PaginatorParameter;
+		elmo:query """
+			select ?friend ?friend_label
+			where {
+				${subject} foaf:knows ?friend
+				OPTIONAL {?friend rdfs:label ?friend_label}
+			}
+			offset ${paginator.pageSize*(paginator.page-1)}
+			limit ${paginator.pageSize}
+		"""
+	.
+	
+	#
+	# Example of a simple string parameter
+	#
+	config:termParameter a elmo:TermParameter;
+		elmo:name "TERM";
+		elmo:shape [
+			sh:datatype xsd:string;
+			sh:minLength 2;
+		]
+	.
+	config:SimpleSearchResult a elmo:InformationProduct;
+		elmo:requiredParameter config:termParameter;
+		elmo:query """
+			select ?resource ?resource_label
+			where {
+				?resource rdfs:label ?resource_label.
+				FILTER (regex(?resource_label,?TERM,"i"))
+			}
+			limit 100
+		"""
+	.
+	
+	#
+	# Example of a list-of-strings parameter
+  # (Currently not supported, minCount and maxCount are commented out for this reason)
+	#
+	config:termsParameter a elmo:TermParameter;
+		elmo:name "term";
+		elmo:shape [
+			sh:datatype xsd:string;
+			#sh:minCount 1;
+			#sh:maxCount 10; (Maximum of 10 terms kan be used)
+		];
+	.
+	config:SearchResult a elmo:InformationProduct;
+		elmo:requiredParameter config:termsParameter;
+		elmo:query """
+			select ?resource ?resource_label
+			where {
+				?resource rdfs:label ?resource_label.
+				FILTER (1=0
+				<#list terms as term>
+					|| regex(?resource_label,"${term}","i")
+				</#list>
+				)
+			}
+			limit 100
+		"""
+	.
+	
+}
